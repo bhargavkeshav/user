@@ -50,9 +50,6 @@ podTemplate(name: label, label: label, nodeSelector: 'function=docker_workers', 
         container('docker') {
           docker.withRegistry('https://993257197638.dkr.ecr.us-east-1.amazonaws.com', 'ecr:us-east-1:ecr-credentials') {
             docker.image('hosting-api-sdk-php-documentation').push('latest')
-            docker.image('hosting-api-sdk-php-documentation').push("${UUID.randomUUID().toString()}")
-            docker.image('hosting-api-sdk-php-documentation').push(new Date().format('yyyyMMdd-HHmmss').toString())
-            docker.image('hosting-api-sdk-php-documentation').push(label)
           }
         }
       }
