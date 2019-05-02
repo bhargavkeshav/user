@@ -1,0 +1,61 @@
+#!/usr/bin/env groovy
+
+def label = "hapi-sdk-php-docs-${UUID.randomUUID().toString()}"
+
+podTemplate(name: label, label: label, nodeSelector: 'function=docker_workers', containers: [
+  containerTemplate(name: 'docker', image: 'docker:stable-dind', ttyEnabled: true, command: 'cat',
+    resourceRequestCpu: '1000m',
+    resourceRequestMemory: '1Gi'),
+  containerTemplate(name: 'php', image: 'php:7.2', ttyEnabled: true, command: 'cat'),
+], volumes: [hostPathVolume(hostPath: '/var/run/docker.sock', mountPath: '/var/run/docker.sock')]) {
+
+  node(label) {
+    ansiColor('xterm') {
+      stage('Clone Repositories') {
+        dir('repo') {
+          dir('hosting-api-sdk-php') {
+            git credentialsId: 'github-ssh-cred', url: 'git@github.com:acquia/hosting-api-sdk-php.git', branch: 'master'
+          }
+          dir('hosting-api') {
+            git credentialsId: 'github-ssh-cred', url: 'git@github.com:acquia/hosting-api.git', branch: 'master'
+          }
+          sh(script: 'cp -r hosting-api/docroot/thrift hosting-api-sdk-php/thrift')
+          // From this point, we don't need hosting-api anymore
+        }
+      }
+
+      stage('Composer install') {
+        container('php') {
+          dir('repo/hosting-api-sdk-php') {
+            sshagent(['github-ssh-cred']) {
+              sh(script: 'apt-get update && apt-get install -y ssh git zip unzip')
+              sh(script: 'ssh-keyscan github.com >> /etc/ssh/ssh_known_hosts')
+              sh(script: "php -r \"readfile('http://getcomposer.org/installer');\" | php -- --install-dir=/usr/bin/ --filename=composer")
+              sh(script: 'composer install')
+              sh(script: 'php -f scripts/GenerateThriftDocs.php thrift/hosting-api.thrift')
+            }
+          }
+        }
+      }
+
+      stage('Build Docker Image') {
+        container('docker') {
+          dir('repo/hosting-api-sdk-php'){
+            docker.build("hosting-api-sdk-php-documentation", "-f Dockerfile thrift")
+          }
+        }
+      }
+
+      stage('Push Docker Image to ECR') {
+        container('docker') {
+          docker.withRegistry('https://993257197638.dkr.ecr.us-east-1.amazonaws.com', 'ecr:us-east-1:ecr-credentials') {
+            docker.image('hosting-api-sdk-php-documentation').push('latest')
+            docker.image('hosting-api-sdk-php-documentation').push("${UUID.randomUUID().toString()}")
+            docker.image('hosting-api-sdk-php-documentation').push(new Date().format('yyyyMMdd-HHmmss').toString())
+            docker.image('hosting-api-sdk-php-documentation').push(label)
+          }
+        }
+      }
+    }
+  }
+}
